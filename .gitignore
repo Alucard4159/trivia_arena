@@ -16,3 +16,9 @@ data/
 .ruff_cache/
 .mypy_cache/
 
+
+.cursor/skills/
+
+.claude/skills/
+
+.kiro/skills/
