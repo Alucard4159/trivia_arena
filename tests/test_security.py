@@ -12,6 +12,82 @@ from trivia_arena.repositories.room_repo import RoomRepository
 from trivia_arena.security import hash_token
 
 
+def test_legacy_plaintext_token_column_scrubbed(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE rooms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL,
+            host_player_id INTEGER,
+            current_round INTEGER NOT NULL DEFAULT 0,
+            pack_id TEXT NOT NULL DEFAULT 'engineering'
+        );
+        CREATE TABLE players (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            room_id INTEGER NOT NULL,
+            display_name TEXT NOT NULL,
+            token TEXT NOT NULL UNIQUE,
+            is_host INTEGER NOT NULL DEFAULT 0,
+            score INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pack_id TEXT NOT NULL DEFAULT 'engineering',
+            category TEXT NOT NULL DEFAULT 'engineering',
+            prompt TEXT NOT NULL,
+            choices_json TEXT NOT NULL,
+            correct_index INTEGER NOT NULL
+        );
+        CREATE TABLE rounds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            room_id INTEGER NOT NULL,
+            round_number INTEGER NOT NULL,
+            question_id INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            phase_ends_at TEXT
+        );
+        CREATE TABLE answers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            round_id INTEGER NOT NULL,
+            player_id INTEGER NOT NULL,
+            choice_index INTEGER NOT NULL
+        );
+        """
+    )
+    raw = "plaintext-bearer-token-value"
+    conn.execute("INSERT INTO rooms (code, status) VALUES ('LEGACY', 'lobby')")
+    conn.execute(
+        """
+        INSERT INTO players (room_id, display_name, token, is_host)
+        VALUES (1, 'Host', ?, 1)
+        """,
+        (raw,),
+    )
+    conn.commit()
+    conn.close()
+
+    migrated = connect(db_path)
+    init_db(migrated)
+    cols = {row[1] for row in migrated.execute("PRAGMA table_info(players)").fetchall()}
+    assert "token_hash" in cols
+    row = migrated.execute(
+        "SELECT token_hash FROM players WHERE display_name = 'Host'"
+    ).fetchone()
+    assert row is not None
+    assert row["token_hash"] == hash_token(raw)
+    if "token" in cols:
+        leftover = migrated.execute("SELECT token FROM players").fetchone()[0]
+        assert leftover != raw
+        assert str(leftover).startswith("scrubbed:")
+    else:
+        assert "token" not in cols
+    migrated.close()
+
+
+
 def test_tokens_hashed_at_rest(client: TestClient, tmp_path: Path) -> None:
     created = client.post("/api/rooms", json={"display_name": "Host"}).json()
     raw = created["token"]
@@ -131,9 +207,54 @@ def _with_csrf(client: TestClient) -> TestClient:
     return client
 
 
+def test_create_rate_limit(tmp_path: Path) -> None:
+    app = create_app(
+        db_path=tmp_path / "create_limit.db",
+        create_rate=(2, 60.0),
+        join_rate=(10_000, 60.0),
+        lookup_rate=(10_000, 60.0),
+    )
+    with TestClient(app) as raw:
+        client = _with_csrf(raw)
+        assert client.post("/api/rooms", json={"display_name": "A"}).status_code == 201
+        assert client.post("/api/rooms", json={"display_name": "B"}).status_code == 201
+        limited = client.post("/api/rooms", json={"display_name": "C"})
+        assert limited.status_code == 429
+
+
+def test_xff_ignored_unless_trust_proxy(tmp_path: Path) -> None:
+    app = create_app(
+        db_path=tmp_path / "xff.db",
+        create_rate=(10_000, 60.0),
+        join_rate=(1, 60.0),
+        lookup_rate=(10_000, 60.0),
+        trust_proxy=False,
+    )
+    with TestClient(app) as raw:
+        client = _with_csrf(raw)
+        host = client.post("/api/rooms", json={"display_name": "Host"}).json()
+        code = host["code"]
+        assert (
+            client.post(
+                f"/api/rooms/{code}/join",
+                json={"display_name": "A"},
+                headers={"X-Forwarded-For": "1.1.1.1"},
+            ).status_code
+            == 201
+        )
+        # Spoofed XFF must not mint a fresh bucket when trust_proxy is off.
+        limited = client.post(
+            f"/api/rooms/{code}/join",
+            json={"display_name": "B"},
+            headers={"X-Forwarded-For": "2.2.2.2"},
+        )
+        assert limited.status_code == 429
+
+
 def test_join_rate_limit(tmp_path: Path) -> None:
     app = create_app(
         db_path=tmp_path / "limit.db",
+        create_rate=(10_000, 60.0),
         join_rate=(2, 60.0),
         lookup_rate=(10_000, 60.0),
     )
@@ -165,6 +286,7 @@ def test_join_rate_limit(tmp_path: Path) -> None:
 def test_lookup_rate_limit(tmp_path: Path) -> None:
     app = create_app(
         db_path=tmp_path / "lookup.db",
+        create_rate=(10_000, 60.0),
         join_rate=(10_000, 60.0),
         lookup_rate=(3, 60.0),
     )

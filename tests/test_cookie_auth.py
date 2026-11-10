@@ -59,6 +59,7 @@ def test_logout_clears_session(client: TestClient) -> None:
 def test_cors_origins_configured(tmp_path: Path) -> None:
     app = create_app(
         db_path=tmp_path / "cors.db",
+        create_rate=(10_000, 60.0),
         join_rate=(10_000, 60.0),
         lookup_rate=(10_000, 60.0),
         cors_origins=["https://alucard4159.github.io"],

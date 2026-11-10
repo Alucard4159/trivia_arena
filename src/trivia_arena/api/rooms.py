@@ -24,9 +24,16 @@ router = APIRouter(prefix="/api/rooms", tags=["rooms"])
 
 
 def _client_key(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    """Client identity for rate limits.
+
+    Uses the direct peer address by default. Only honor X-Forwarded-For when the
+    operator opts in via TRIVIA_TRUST_PROXY / create_app(trust_proxy=True) and a
+    reverse proxy overwrites that header.
+    """
+    if bool(getattr(request.app.state, "trust_proxy", False)):
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
     if request.client is not None:
         return request.client.host
     return "unknown"
@@ -60,6 +67,7 @@ def create_room(
     response: Response,
     game: Annotated[GameService, Depends(get_game_service)],
 ) -> RoomCreatedOut:
+    _enforce(request.app.state.create_limiter, _client_key(request), action="create room")
     out = game.create_room(body.display_name, pack_id=body.pack_id)
     _set_auth_cookies(request, response, out.token)
     return out

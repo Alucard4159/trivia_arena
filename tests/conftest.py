@@ -13,6 +13,7 @@ def client(tmp_path: Path) -> TestClient:
     # High ceilings so suite traffic does not trip join/lookup limiters.
     app = create_app(
         db_path=tmp_path / "test.db",
+        create_rate=(10_000, 60.0),
         join_rate=(10_000, 60.0),
         lookup_rate=(10_000, 60.0),
     )

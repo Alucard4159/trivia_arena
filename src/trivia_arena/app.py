@@ -25,6 +25,7 @@ from trivia_arena.rate_limit import RateLimiter
 STATIC_DIR = Path(__file__).parent / "static"
 
 # Defaults: blunt room-code guessing without punishing normal play/polling.
+DEFAULT_CREATE_RATE = (10, 60.0)  # 10 creates / minute / IP
 DEFAULT_JOIN_RATE = (20, 60.0)  # 20 joins / minute / IP
 DEFAULT_LOOKUP_RATE = (120, 60.0)  # 120 lookups / minute / IP
 
@@ -35,14 +36,20 @@ def _parse_cors_origins(value: str | None) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").lower() in {"1", "true", "yes"}
+
+
 def create_app(
     *,
     db_path: Path | str = "data/trivia.db",
+    create_rate: tuple[int, float] = DEFAULT_CREATE_RATE,
     join_rate: tuple[int, float] = DEFAULT_JOIN_RATE,
     lookup_rate: tuple[int, float] = DEFAULT_LOOKUP_RATE,
     cors_origins: Sequence[str] | None = None,
     cookie_secure: bool | None = None,
     cookie_samesite: str | None = None,
+    trust_proxy: bool | None = None,
 ) -> FastAPI:
     path = Path(db_path)
     origins = list(cors_origins) if cors_origins is not None else _parse_cors_origins(
@@ -51,11 +58,12 @@ def create_app(
     secure = (
         cookie_secure
         if cookie_secure is not None
-        else os.environ.get("TRIVIA_COOKIE_SECURE", "").lower() in {"1", "true", "yes"}
+        else _env_flag("TRIVIA_COOKIE_SECURE")
     )
     samesite = (cookie_samesite or os.environ.get("TRIVIA_COOKIE_SAMESITE") or "lax").lower()
     if samesite not in {"lax", "strict", "none"}:
         samesite = "lax"
+    proxy = trust_proxy if trust_proxy is not None else _env_flag("TRIVIA_TRUST_PROXY")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -65,6 +73,10 @@ def create_app(
         finally:
             conn.close()
         app.state.db_path = path
+        app.state.create_limiter = RateLimiter(
+            max_calls=create_rate[0],
+            window_seconds=create_rate[1],
+        )
         app.state.join_limiter = RateLimiter(
             max_calls=join_rate[0],
             window_seconds=join_rate[1],
@@ -76,6 +88,7 @@ def create_app(
         app.state.cookie_secure = secure
         app.state.cookie_samesite = samesite
         app.state.cors_origins = origins
+        app.state.trust_proxy = proxy
         yield
 
     app = FastAPI(title="Trivia Arena", version="0.1.0", lifespan=lifespan)

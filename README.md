@@ -32,10 +32,12 @@ UI uses **1s short-poll** (no WebSockets yet). Auth for the browser is **HttpOnl
 $env:TRIVIA_CORS_ORIGINS = "https://alucard4159.github.io"
 $env:TRIVIA_COOKIE_SECURE = "true"
 $env:TRIVIA_COOKIE_SAMESITE = "none"   # cross-site cookies
+# Only if a reverse proxy overwrites X-Forwarded-For:
+# $env:TRIVIA_TRUST_PROXY = "true"
 uv run trivia-arena
 ```
 
-Same-origin (default) needs no CORS env vars.
+Same-origin (default) needs no CORS env vars. Create/join/lookup are rate-limited per peer IP.
 
 ## Question packs
 

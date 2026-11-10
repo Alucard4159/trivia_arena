@@ -106,12 +106,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
         """
     )
 
+    _migrate_player_tokens(conn)
+
+
+def _migrate_player_tokens(conn: sqlite3.Connection) -> None:
     player_cols = _table_cols(conn, "players")
     if "token_hash" not in player_cols:
         conn.execute("ALTER TABLE players ADD COLUMN token_hash TEXT")
+        player_cols = _table_cols(conn, "players")
         if "token" in player_cols:
             for row in conn.execute("SELECT id, token FROM players").fetchall():
-                raw = str(row["token"])
+                raw = str(row["token"] or "")
+                if not raw:
+                    continue
                 digest = raw if looks_like_token_hash(raw) else hash_token(raw)
                 conn.execute(
                     "UPDATE players SET token_hash = ? WHERE id = ?",
@@ -123,6 +130,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
             ON players (token_hash)
             """
         )
+
+    # Drop leftover plaintext column so DB exfil cannot recover bearer tokens.
+    if "token" in _table_cols(conn, "players"):
+        try:
+            conn.execute("ALTER TABLE players DROP COLUMN token")
+        except sqlite3.OperationalError:
+            # Older SQLite without DROP COLUMN: overwrite with unique non-secrets.
+            for row in conn.execute("SELECT id FROM players").fetchall():
+                conn.execute(
+                    "UPDATE players SET token = ? WHERE id = ?",
+                    (f"scrubbed:{row['id']}", row["id"]),
+                )
 
 
 def _seed_local_packs(conn: sqlite3.Connection) -> None:

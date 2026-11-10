@@ -54,22 +54,25 @@ Only the connection with `rowcount == 1` adds points. Covered by `tests/test_sec
 
 **Issue:** Bearer tokens were stored plaintext in `players.token`. DB exfil = full account takeover for every player.
 
-**Fix:** Store `token_hash = SHA-256(raw_token)` only. Raw token returned once at create/join; lookups hash the presented Bearer. Migration hashes legacy plaintext rows when upgrading older DBs.
+**Fix:** Store `token_hash = SHA-256(raw_token)` only. Raw token returned once at create/join; lookups hash the presented Bearer. Migration hashes legacy plaintext rows, then **drops** `players.token` (or overwrites with `scrubbed:<id>` on older SQLite).
 
 Residual risk: SHA-256 without per-token salt is fine for high-entropy `token_urlsafe(24)` secrets; do not reuse this pattern for passwords.
 
-### 4. Room-code brute force (unauthorized join / recon)
+### 4. Room-code brute force / room spam
 
-**Issue:** 6-char codes over `[A-Z0-9]` are guessable under unbounded `join` / `GET` traffic.
+**Issue:** 6-char codes over `[A-Z0-9]` are guessable under unbounded `join` / `GET` traffic; unbounded `POST /api/rooms` enables table spam and OTDB fetch abuse.
 
-**Fix:** In-process sliding-window rate limits per client IP (or first `X-Forwarded-For` hop):
+**Fix:** In-process sliding-window rate limits per direct peer IP:
 
+- Create room: 10 / minute (default)
 - Join: 20 / minute (default)
 - Room lookup: 120 / minute (default; allows ~1 Hz UI polling with headroom)
 
-Return `429` + `Retry-After: 60`. Limits are configurable in `create_app(...)` for tests / deploy.
+Return `429` + `Retry-After: 60`. Limits are configurable in `create_app(...)`.
 
-Residual risk: limiter is per-process memory (not shared across workers); spoofable `X-Forwarded-For` unless the reverse proxy overwrites it. Bind to proxy-trusted IP in production.
+`X-Forwarded-For` is **ignored** unless `TRIVIA_TRUST_PROXY=1` / `create_app(trust_proxy=True)` — only enable behind a proxy that overwrites/strips that header.
+
+Residual risk: limiter is per-process memory (not shared across workers).
 
 ### 5. Browser XSS / CSRF
 
