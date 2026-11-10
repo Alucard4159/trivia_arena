@@ -105,7 +105,8 @@ def test_static_routes(client: TestClient) -> None:
 
     js = client.get("/static/app.js")
     assert js.status_code == 200
-    assert b"trivia_arena_session" in js.content
+    assert b"trivia_arena_meta" in js.content
+    assert b"X-CSRF-Token" in js.content
 
     css = client.get("/static/style.css")
     assert css.status_code == 200

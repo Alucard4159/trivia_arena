@@ -1,0 +1,8 @@
+{
+  "id": "open_trivia",
+  "title": "Open Trivia DB",
+  "description": "Fresh multiple-choice questions fetched from Open Trivia DB and cached locally.",
+  "category": "mixed",
+  "source": "opentdb",
+  "questions": []
+}

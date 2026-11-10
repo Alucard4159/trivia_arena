@@ -1,0 +1,59 @@
+{
+  "id": "engineering",
+  "title": "Engineering",
+  "description": "APIs, Python, and layered architecture.",
+  "category": "engineering",
+  "source": "local",
+  "questions": [
+    {
+      "prompt": "What does HTTP status 404 mean?",
+      "choices": ["OK", "Created", "Not Found", "Unauthorized"],
+      "correct_index": 2
+    },
+    {
+      "prompt": "Which Python version does this stack lock?",
+      "choices": ["3.9", "3.10", "3.11", "3.12"],
+      "correct_index": 3
+    },
+    {
+      "prompt": "Where should SQL live in the layered architecture?",
+      "choices": ["Routes", "Services", "Repositories", "Schemas"],
+      "correct_index": 2
+    },
+    {
+      "prompt": "What validation library sits at trust boundaries?",
+      "choices": ["attrs", "Pydantic v2", "marshmallow", "dataclasses"],
+      "correct_index": 1
+    },
+    {
+      "prompt": "Which is the pack stance on ORMs?",
+      "choices": ["Required", "SQLAlchemy ORM only", "No ORM", "Django ORM preferred"],
+      "correct_index": 2
+    },
+    {
+      "prompt": "Which HTTP method is idempotent and typically used for full resource replace?",
+      "choices": ["POST", "PATCH", "PUT", "CONNECT"],
+      "correct_index": 2
+    },
+    {
+      "prompt": "What does ACID's \"I\" stand for?",
+      "choices": ["Indexing", "Isolation", "Integrity", "Idempotency"],
+      "correct_index": 1
+    },
+    {
+      "prompt": "Bearer tokens usually travel in which header?",
+      "choices": ["Cookie", "Authorization", "X-Api-Key", "Accept"],
+      "correct_index": 1
+    },
+    {
+      "prompt": "SQLite foreign keys need which PRAGMA enabled?",
+      "choices": ["journal_mode=WAL", "foreign_keys=ON", "synchronous=NORMAL", "temp_store=MEMORY"],
+      "correct_index": 1
+    },
+    {
+      "prompt": "FastAPI dependency injection is primarily driven by which construct?",
+      "choices": ["middleware", "Depends", "BackgroundTasks", "Mount"],
+      "correct_index": 1
+    }
+  ]
+}

@@ -1,11 +1,14 @@
 (() => {
-  const STORAGE_KEY = "trivia_arena_session";
+  const STORAGE_KEY = "trivia_arena_meta";
   const POLL_MS = 1000;
+  const CSRF_HEADER = "X-CSRF-Token";
 
   const els = {
     home: document.getElementById("view-home"),
     game: document.getElementById("view-game"),
     displayName: document.getElementById("display-name"),
+    packSelect: document.getElementById("pack-select"),
+    packHint: document.getElementById("pack-hint"),
     roomCode: document.getElementById("room-code"),
     homeError: document.getElementById("home-error"),
     gameError: document.getElementById("game-error"),
@@ -29,26 +32,69 @@
     btnLeave: document.getElementById("btn-leave"),
   };
 
-  /** @type {{ code: string, token: string, is_host: boolean, player_id: number } | null} */
+  /** @type {{ code: string, is_host: boolean, player_id: number } | null} */
   let session = loadSession();
   /** @type {ReturnType<typeof setInterval> | null} */
   let pollTimer = null;
   let answering = false;
+  /** @type {string} */
+  let csrfToken = "";
+
+  /** @type {Array<{id:string,title:string,description:string,source:string,question_count:number}>} */
+  let packs = [];
 
   els.btnCreate.addEventListener("click", () => createRoom());
   els.btnJoin.addEventListener("click", () => joinRoom());
   els.btnStart.addEventListener("click", () => postAction("start"));
   els.btnNext.addEventListener("click", () => postAction("next"));
   els.btnLeave.addEventListener("click", leaveRoom);
+  els.packSelect.addEventListener("change", updatePackHint);
 
-  if (session) {
-    showGame();
-    startPolling();
+  boot();
+
+  async function boot() {
+    try {
+      await ensureCsrf();
+      await loadPacks();
+      if (session) {
+        showGame();
+        startPolling();
+      }
+    } catch (err) {
+      showError(els.homeError, err.message);
+    }
+  }
+
+  async function ensureCsrf() {
+    const data = await api("/api/auth/csrf", { method: "GET" });
+    csrfToken = data.csrf_token;
+  }
+
+  async function loadPacks() {
+    packs = await api("/api/packs");
+    els.packSelect.replaceChildren();
+    packs.forEach((pack) => {
+      const opt = document.createElement("option");
+      opt.value = pack.id;
+      opt.textContent = `${pack.title} (${pack.source})`;
+      els.packSelect.appendChild(opt);
+    });
+    if (!els.packSelect.value && packs[0]) els.packSelect.value = packs[0].id;
+    const preferred = packs.find((p) => p.id === "engineering");
+    if (preferred) els.packSelect.value = preferred.id;
+    updatePackHint();
+  }
+
+  function updatePackHint() {
+    const pack = packs.find((p) => p.id === els.packSelect.value);
+    els.packHint.textContent = pack
+      ? `${pack.description} · ~${pack.question_count} questions`
+      : "";
   }
 
   function loadSession() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = sessionStorage.getItem(STORAGE_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
@@ -57,8 +103,8 @@
 
   function saveSession(next) {
     session = next;
-    if (next) localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    else localStorage.removeItem(STORAGE_KEY);
+    if (next) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    else sessionStorage.removeItem(STORAGE_KEY);
   }
 
   function showError(el, message) {
@@ -71,13 +117,27 @@
     el.textContent = message;
   }
 
-  async function api(path, { method = "GET", body, auth = false } = {}) {
+  function readCookie(name) {
+    const parts = document.cookie.split(";").map((p) => p.trim());
+    for (const part of parts) {
+      if (part.startsWith(name + "=")) {
+        return decodeURIComponent(part.slice(name.length + 1));
+      }
+    }
+    return "";
+  }
+
+  async function api(path, { method = "GET", body } = {}) {
     const headers = { Accept: "application/json" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    if (auth && session?.token) headers.Authorization = `Bearer ${session.token}`;
+    if (method !== "GET" && method !== "HEAD") {
+      const csrf = csrfToken || readCookie("ta_csrf");
+      if (csrf) headers[CSRF_HEADER] = csrf;
+    }
     const res = await fetch(path, {
       method,
       headers,
+      credentials: "same-origin",
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     let data = null;
@@ -94,6 +154,9 @@
       const msg = typeof detail === "string" ? detail : res.statusText;
       throw new Error(msg || `HTTP ${res.status}`);
     }
+    // Refresh CSRF from cookie if server rotated it on create/join.
+    const rotated = readCookie("ta_csrf");
+    if (rotated) csrfToken = rotated;
     return data;
   }
 
@@ -105,13 +168,14 @@
       return;
     }
     try {
+      await ensureCsrf();
       const data = await api("/api/rooms", {
         method: "POST",
-        body: { display_name },
+        body: { display_name, pack_id: els.packSelect.value || "engineering" },
       });
+      // Token stays in HttpOnly cookie — never localStorage.
       saveSession({
         code: data.code,
-        token: data.token,
         is_host: data.is_host,
         player_id: data.player_id,
       });
@@ -131,13 +195,13 @@
       return;
     }
     try {
+      await ensureCsrf();
       const data = await api(`/api/rooms/${encodeURIComponent(code)}/join`, {
         method: "POST",
         body: { display_name },
       });
       saveSession({
         code: data.code,
-        token: data.token,
         is_host: data.is_host,
         player_id: data.player_id,
       });
@@ -154,7 +218,6 @@
     try {
       const state = await api(`/api/rooms/${encodeURIComponent(session.code)}/${action}`, {
         method: "POST",
-        auth: true,
       });
       renderState(state);
     } catch (err) {
@@ -169,7 +232,6 @@
     try {
       const state = await api(`/api/rooms/${encodeURIComponent(session.code)}/answer`, {
         method: "POST",
-        auth: true,
         body: { choice_index: choiceIndex },
       });
       renderState(state);
@@ -180,8 +242,14 @@
     }
   }
 
-  function leaveRoom() {
+  async function leaveRoom() {
     stopPolling();
+    try {
+      await ensureCsrf();
+      await api("/api/auth/logout", { method: "POST" });
+    } catch {
+      // still clear local meta
+    }
     saveSession(null);
     els.game.hidden = true;
     els.home.hidden = false;
@@ -209,9 +277,7 @@
   async function refresh() {
     if (!session) return;
     try {
-      const state = await api(`/api/rooms/${encodeURIComponent(session.code)}`, {
-        auth: true,
-      });
+      const state = await api(`/api/rooms/${encodeURIComponent(session.code)}`);
       renderState(state);
       showError(els.gameError, "");
     } catch (err) {

@@ -12,10 +12,13 @@ from trivia_arena.domain.exceptions import (
     NotFoundError,
     ValidationDomainError,
 )
+from trivia_arena.opentdb import fetch_opentdb_questions
+from trivia_arena.packs_catalog import PackQuestion, get_pack, load_all_packs
 from trivia_arena.repositories.room_repo import PlayerRow, RoomRepository, RoomRow, RoundRow
 from trivia_arena.schemas.room import (
     AnswerReveal,
     JoinedOut,
+    PackOut,
     PlayerPublic,
     QuestionPublic,
     RoomCreatedOut,
@@ -26,6 +29,8 @@ from trivia_arena.schemas.room import (
 MAX_ROUNDS = 5
 ROUND_SECONDS = 20
 REVEAL_SECONDS = 5
+OTDB_FETCH_AMOUNT = 12
+DEFAULT_PACK_ID = "engineering"
 
 
 def _utc_now() -> datetime:
@@ -57,19 +62,54 @@ class GameService:
         now_fn: Callable[[], datetime] | None = None,
         round_seconds: int = ROUND_SECONDS,
         reveal_seconds: int = REVEAL_SECONDS,
+        otdb_fetch: Callable[[], list[PackQuestion]] | None = None,
     ) -> None:
         self._repo = repo
         self._now_fn = now_fn
         self._round_seconds = round_seconds
         self._reveal_seconds = reveal_seconds
+        self._otdb_fetch = otdb_fetch
 
     def _now(self) -> datetime:
         return self._now_fn() if self._now_fn is not None else _utc_now()
 
-    def create_room(self, display_name: str) -> RoomCreatedOut:
+    def list_packs(self) -> list[PackOut]:
+        out: list[PackOut] = []
+        for pack in load_all_packs():
+            count = self._repo.count_questions(pack.id)
+            if pack.source == "opentdb" and count == 0:
+                # Not cached yet; still playable after create fetches.
+                count = OTDB_FETCH_AMOUNT
+            out.append(
+                PackOut(
+                    id=pack.id,
+                    title=pack.title,
+                    description=pack.description,
+                    category=pack.category,
+                    source=pack.source,
+                    question_count=count,
+                )
+            )
+        return out
+
+    def create_room(
+        self,
+        display_name: str,
+        *,
+        pack_id: str = DEFAULT_PACK_ID,
+    ) -> RoomCreatedOut:
         name = display_name.strip()
         if not name:
             raise ValidationDomainError("display_name required")
+
+        pack = get_pack(pack_id)
+        if pack is None:
+            raise NotFoundError(f"pack not found: {pack_id}")
+
+        self._ensure_pack_questions(pack.id)
+
+        if self._repo.count_questions(pack.id) < MAX_ROUNDS:
+            raise ConflictError(f"pack '{pack.id}' needs at least {MAX_ROUNDS} questions")
 
         for _ in range(8):
             code = _room_code()
@@ -78,14 +118,37 @@ class GameService:
         else:
             raise ConflictError("could not allocate room code")
 
-        room = self._repo.create_room(code)
-        host = self._repo.add_player(room.id, name, is_host=True)
+        room = self._repo.create_room(code, pack.id)
+        host, raw_token = self._repo.add_player(room.id, name, is_host=True)
         self._repo.set_host(room.id, host.id)
         return RoomCreatedOut(
             code=room.code,
             player_id=host.id,
-            token=host.token,
+            token=raw_token,
             is_host=True,
+            pack_id=room.pack_id,
+        )
+
+    def _ensure_pack_questions(self, pack_id: str) -> None:
+        pack = get_pack(pack_id)
+        if pack is None:
+            raise NotFoundError(f"pack not found: {pack_id}")
+        if pack.source != "opentdb":
+            return
+        # Refresh cache when thin so rooms don't starve mid-game.
+        if self._repo.count_questions(pack.id) >= MAX_ROUNDS:
+            return
+        fetch = self._otdb_fetch or (lambda: fetch_opentdb_questions(amount=OTDB_FETCH_AMOUNT))
+        try:
+            fetched = fetch()
+        except Exception as exc:
+            raise ConflictError(f"failed to fetch Open Trivia DB questions: {exc}") from exc
+        if not fetched:
+            raise ConflictError("Open Trivia DB returned no questions")
+        self._repo.insert_questions(
+            pack_id=pack.id,
+            category=pack.category,
+            questions=[(q.prompt, q.choices, q.correct_index) for q in fetched],
         )
 
     def join_room(self, code: str, display_name: str) -> JoinedOut:
@@ -100,14 +163,14 @@ class GameService:
             raise ConflictError("room already started")
 
         try:
-            player = self._repo.add_player(room.id, name, is_host=False)
+            player, raw_token = self._repo.add_player(room.id, name, is_host=False)
         except sqlite3.IntegrityError as exc:
             raise ConflictError("display_name already taken in room") from exc
 
         return JoinedOut(
             code=room.code,
             player_id=player.id,
-            token=player.token,
+            token=raw_token,
             is_host=False,
         )
 
@@ -231,16 +294,19 @@ class GameService:
         rnd = self._repo.get_round_by_id(round_id)
         if rnd is None or rnd.status != "open":
             return
+        ends = _deadline(reveal_seconds, now=self._now())
+        # Claim first so concurrent ticks cannot double-award points.
+        if not self._repo.claim_round_scored(round_id, ends):
+            return
         question = self._repo.get_question(rnd.question_id)
         for player_id, choice_index in self._repo.list_answers(round_id):
             if choice_index == question.correct_index:
                 self._repo.add_score(player_id, 1)
-        ends = _deadline(reveal_seconds, now=self._now())
-        self._repo.mark_round_scored(round_id, ends)
 
     def _open_next_round(self, room_id: int, *, next_number: int) -> None:
+        room = self._require_room_by_id(room_id)
         used = self._repo.used_question_ids(room_id)
-        question = self._repo.pick_question(used)
+        question = self._repo.pick_question(room.pack_id, used)
         if question is None:
             self._repo.set_status(room_id, "finished")
             return
@@ -284,6 +350,7 @@ class GameService:
             code=room.code,
             status=room.status,  # type: ignore[arg-type]
             current_round=room.current_round,
+            pack_id=room.pack_id,
             players=players,
             question=question,
             your_answered=your_answered,

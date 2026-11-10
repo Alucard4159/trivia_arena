@@ -16,3 +16,7 @@ class ConflictError(DomainError):
 
 class ValidationDomainError(DomainError):
     pass
+
+
+class RateLimitError(DomainError):
+    pass

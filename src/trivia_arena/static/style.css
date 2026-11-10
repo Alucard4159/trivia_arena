@@ -56,7 +56,8 @@ label {
   margin-bottom: 0.85rem;
 }
 
-input {
+input,
+select {
   width: 100%;
   padding: 0.7rem 0.8rem;
   border-radius: 0.45rem;
@@ -66,9 +67,17 @@ input {
   font-size: 1rem;
 }
 
-input:focus {
+input:focus,
+select:focus {
   outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
   border-color: var(--accent);
+}
+
+.hint {
+  margin: -0.35rem 0 0.85rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  min-height: 1.2rem;
 }
 
 .row,

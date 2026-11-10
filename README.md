@@ -24,15 +24,41 @@ Swagger stays at http://127.0.0.1:8000/docs
 
 Rounds auto-advance: 20s to answer, 5s reveal, or early when everyone has answered. Host **Force next** still skips the clock.
 
+UI uses **1s short-poll** (no WebSockets yet). Auth for the browser is **HttpOnly `ta_session` + double-submit CSRF** (`ta_csrf` cookie + `X-CSRF-Token`). API/tests keep `Authorization: Bearer …` (CSRF skipped when Bearer is present).
+
+### Split frontend (GitHub Pages) CORS
+
+```powershell
+$env:TRIVIA_CORS_ORIGINS = "https://alucard4159.github.io"
+$env:TRIVIA_COOKIE_SECURE = "true"
+$env:TRIVIA_COOKIE_SAMESITE = "none"   # cross-site cookies
+uv run trivia-arena
+```
+
+Same-origin (default) needs no CORS env vars.
+
+## Question packs
+
+Local JSON packs live under `src/trivia_arena/packs/` (`engineering`, `general`, `science`).
+
+`open_trivia` fetches from [Open Trivia DB](https://opentdb.com/) on room create when the cache is thin, then stores rows in SQLite for reuse.
+
+- `GET /api/packs` — pack catalog
+- `POST /api/rooms` `{ "display_name": "Host", "pack_id": "science" }` — optional `pack_id` (default `engineering`)
+
 ## Flow
 
-1. `POST /api/rooms` `{ "display_name": "Host" }` → `code` + Bearer `token`
+Browser: `GET /api/auth/csrf` → then POSTs with `X-CSRF-Token` (session cookie set on create/join).
+
+API client:
+
+1. `POST /api/rooms` `{ "display_name": "Host", "pack_id": "general" }` → `code` + `token` (+ cookies for browsers)
 2. `POST /api/rooms/{code}/join` `{ "display_name": "Guest" }`
 3. Host `POST /api/rooms/{code}/start` with `Authorization: Bearer …`
 4. Players `POST /api/rooms/{code}/answer` `{ "choice_index": 0 }`
-5. Host `POST /api/rooms/{code}/next` (scores open round, opens next; finishes after 5)
+5. Host `POST /api/rooms/{code}/next` (or wait for timers)
 
-`GET /api/rooms/{code}` returns lobby/active state. Pass Bearer to see `your_answered`.
+`GET /api/rooms/{code}` returns lobby/active state (includes `pack_id`). Auth via Bearer **or** session cookie.
 
 ## Test
 
@@ -40,11 +66,11 @@ Rounds auto-advance: 20s to answer, 5s reveal, or early when everyone has answer
 uv run pytest
 ```
 
+Security threat model + hardening notes: [SECURITY.md](SECURITY.md).
+
 ## Expand later
 
-- Cookie auth + CSRF (UI currently keeps Bearer in localStorage)
-- Question packs / categories
-- WebSocket lobby presence
+- WebSocket broadcasts for `round_opened` / `round_scored` only (REST stays source of truth)
 - Idempotency keys on answer
 - Hypothesis property tests for scoring
 - Sysinfo collectors as a *separate* project once this stack is comfortable

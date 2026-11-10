@@ -1,0 +1,59 @@
+{
+  "id": "general",
+  "title": "General Knowledge",
+  "description": "Mixed trivia for casual games.",
+  "category": "general",
+  "source": "local",
+  "questions": [
+    {
+      "prompt": "How many continents are there on Earth (conventional model)?",
+      "choices": ["5", "6", "7", "8"],
+      "correct_index": 2
+    },
+    {
+      "prompt": "Which planet is known as the Red Planet?",
+      "choices": ["Venus", "Mars", "Jupiter", "Mercury"],
+      "correct_index": 1
+    },
+    {
+      "prompt": "What is the capital of Japan?",
+      "choices": ["Osaka", "Kyoto", "Tokyo", "Nagoya"],
+      "correct_index": 2
+    },
+    {
+      "prompt": "How many degrees are in a circle?",
+      "choices": ["90", "180", "270", "360"],
+      "correct_index": 3
+    },
+    {
+      "prompt": "Which ocean is the largest?",
+      "choices": ["Atlantic", "Indian", "Arctic", "Pacific"],
+      "correct_index": 3
+    },
+    {
+      "prompt": "Who painted the Mona Lisa?",
+      "choices": ["Michelangelo", "Leonardo da Vinci", "Raphael", "Donatello"],
+      "correct_index": 1
+    },
+    {
+      "prompt": "What gas do plants absorb from the air for photosynthesis?",
+      "choices": ["Oxygen", "Nitrogen", "Carbon dioxide", "Hydrogen"],
+      "correct_index": 2
+    },
+    {
+      "prompt": "Which instrument has 88 keys?",
+      "choices": ["Guitar", "Violin", "Piano", "Harp"],
+      "correct_index": 2
+    },
+    {
+      "prompt": "What is H2O commonly known as?",
+      "choices": ["Salt", "Water", "Hydrogen peroxide", "Ozone"],
+      "correct_index": 1
+    },
+    {
+      "prompt": "Which country gifted the Statue of Liberty to the USA?",
+      "choices": ["England", "Spain", "France", "Italy"],
+      "correct_index": 2
+    }
+  ]
+}

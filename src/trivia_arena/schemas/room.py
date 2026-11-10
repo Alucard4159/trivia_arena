@@ -7,6 +7,16 @@ from pydantic import BaseModel, Field
 
 class CreateRoomIn(BaseModel):
     display_name: str = Field(min_length=1, max_length=32)
+    pack_id: str = Field(default="engineering", min_length=1, max_length=64)
+
+
+class PackOut(BaseModel):
+    id: str
+    title: str
+    description: str
+    category: str
+    source: str
+    question_count: int
 
 
 class JoinRoomIn(BaseModel):
@@ -49,6 +59,7 @@ class RoomStateOut(BaseModel):
     code: str
     status: Literal["lobby", "active", "finished"]
     current_round: int
+    pack_id: str
     players: list[PlayerPublic]
     question: QuestionPublic | None = None
     your_answered: bool | None = None
@@ -61,6 +72,7 @@ class RoomCreatedOut(BaseModel):
     player_id: int
     token: str
     is_host: bool
+    pack_id: str
 
 
 class JoinedOut(BaseModel):
@@ -68,3 +80,4 @@ class JoinedOut(BaseModel):
     player_id: int
     token: str
     is_host: bool
+
