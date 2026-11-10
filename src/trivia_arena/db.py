@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS rounds (
     round_number INTEGER NOT NULL,
     question_id INTEGER NOT NULL REFERENCES questions(id),
     status TEXT NOT NULL CHECK (status IN ('open', 'scored')),
+    phase_ends_at TEXT,
     UNIQUE (room_id, round_number)
 );
 
@@ -91,8 +92,15 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(rounds)").fetchall()}
+    if "phase_ends_at" not in cols:
+        conn.execute("ALTER TABLE rounds ADD COLUMN phase_ends_at TEXT")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    _migrate(conn)
     count = conn.execute("SELECT COUNT(*) AS c FROM questions").fetchone()["c"]
     if count == 0:
         conn.executemany(

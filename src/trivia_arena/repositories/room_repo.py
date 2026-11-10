@@ -40,6 +40,7 @@ class RoundRow:
     round_number: int
     question_id: int
     status: str
+    phase_ends_at: str | None
 
 
 def _room(row: sqlite3.Row) -> RoomRow:
@@ -79,6 +80,7 @@ def _round(row: sqlite3.Row) -> RoundRow:
         round_number=row["round_number"],
         question_id=row["question_id"],
         status=row["status"],
+        phase_ends_at=row["phase_ends_at"],
     )
 
 
@@ -101,6 +103,13 @@ class RoomRepository:
         row = self._conn.execute(
             "SELECT * FROM rooms WHERE code = ?",
             (code.upper(),),
+        ).fetchone()
+        return _room(row) if row else None
+
+    def get_by_id(self, room_id: int) -> RoomRow | None:
+        row = self._conn.execute(
+            "SELECT * FROM rooms WHERE id = ?",
+            (room_id,),
         ).fetchone()
         return _room(row) if row else None
 
@@ -188,13 +197,14 @@ class RoomRepository:
         room_id: int,
         round_number: int,
         question_id: int,
+        phase_ends_at: str,
     ) -> RoundRow:
         cur = self._conn.execute(
             """
-            INSERT INTO rounds (room_id, round_number, question_id, status)
-            VALUES (?, ?, ?, 'open')
+            INSERT INTO rounds (room_id, round_number, question_id, status, phase_ends_at)
+            VALUES (?, ?, ?, 'open', ?)
             """,
-            (room_id, round_number, question_id),
+            (room_id, round_number, question_id, phase_ends_at),
         )
         row = self._conn.execute(
             "SELECT * FROM rounds WHERE id = ?",
@@ -259,10 +269,20 @@ class RoomRepository:
         ).fetchall()
         return [(int(r["player_id"]), int(r["choice_index"])) for r in rows]
 
-    def mark_round_scored(self, round_id: int) -> None:
+    def mark_round_scored(self, round_id: int, phase_ends_at: str) -> None:
         self._conn.execute(
-            "UPDATE rounds SET status = 'scored' WHERE id = ?",
-            (round_id,),
+            """
+            UPDATE rounds
+            SET status = 'scored', phase_ends_at = ?
+            WHERE id = ?
+            """,
+            (phase_ends_at, round_id),
+        )
+
+    def set_phase_ends_at(self, round_id: int, phase_ends_at: str) -> None:
+        self._conn.execute(
+            "UPDATE rounds SET phase_ends_at = ? WHERE id = ?",
+            (phase_ends_at, round_id),
         )
 
     def add_score(self, player_id: int, points: int) -> None:

@@ -18,7 +18,11 @@ uv run trivia-arena
 # or: uv run uvicorn trivia_arena.main:app --reload
 ```
 
-Open http://127.0.0.1:8000/docs
+Open http://127.0.0.1:8000/ for the game UI (create/join, answer, countdown).
+
+Swagger stays at http://127.0.0.1:8000/docs
+
+Rounds auto-advance: 20s to answer, 5s reveal, or early when everyone has answered. Host **Force next** still skips the clock.
 
 ## Flow
 
@@ -38,7 +42,7 @@ uv run pytest
 
 ## Expand later
 
-- Cookie auth + CSRF for a browser client
+- Cookie auth + CSRF (UI currently keeps Bearer in localStorage)
 - Question packs / categories
 - WebSocket lobby presence
 - Idempotency keys on answer

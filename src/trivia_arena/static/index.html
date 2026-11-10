@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trivia Arena</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="brand">
+        <h1>Trivia Arena</h1>
+        <p class="tag">Multiplayer rounds. Beat the clock.</p>
+      </header>
+
+      <section id="view-home" class="panel">
+        <label>
+          Display name
+          <input id="display-name" maxlength="32" placeholder="Your name" autocomplete="nickname" />
+        </label>
+        <div class="row">
+          <button type="button" id="btn-create">Create room</button>
+        </div>
+        <div class="join">
+          <label>
+            Room code
+            <input id="room-code" maxlength="6" placeholder="ABC123" autocomplete="off" />
+          </label>
+          <button type="button" id="btn-join">Join</button>
+        </div>
+        <p id="home-error" class="error" hidden></p>
+      </section>
+
+      <section id="view-game" class="panel" hidden>
+        <div class="meta">
+          <span>Room <strong id="meta-code"></strong></span>
+          <span id="meta-round"></span>
+          <span id="meta-timer" class="timer"></span>
+        </div>
+        <p id="game-status" class="status"></p>
+        <div id="question-block" hidden>
+          <h2 id="question-prompt"></h2>
+          <div id="choices" class="choices"></div>
+        </div>
+        <div id="reveal-block" hidden>
+          <h2 id="reveal-prompt"></h2>
+          <div id="reveal-choices" class="choices"></div>
+          <ul id="reveal-answers" class="answers"></ul>
+        </div>
+        <ul id="scoreboard" class="scoreboard"></ul>
+        <div class="host-actions" id="host-actions" hidden>
+          <button type="button" id="btn-start">Start game</button>
+          <button type="button" id="btn-next">Force next</button>
+        </div>
+        <button type="button" id="btn-leave" class="ghost">Leave room</button>
+        <p id="game-error" class="error" hidden></p>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

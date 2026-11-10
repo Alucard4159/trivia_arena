@@ -30,6 +30,21 @@ class QuestionPublic(BaseModel):
     round_number: int
 
 
+class AnswerReveal(BaseModel):
+    player_id: int
+    display_name: str
+    choice_index: int | None
+    correct: bool
+
+
+class RoundResult(BaseModel):
+    round_number: int
+    prompt: str
+    choices: list[str]
+    correct_index: int
+    answers: list[AnswerReveal]
+
+
 class RoomStateOut(BaseModel):
     code: str
     status: Literal["lobby", "active", "finished"]
@@ -37,6 +52,8 @@ class RoomStateOut(BaseModel):
     players: list[PlayerPublic]
     question: QuestionPublic | None = None
     your_answered: bool | None = None
+    phase_ends_at: str | None = None
+    last_result: RoundResult | None = None
 
 
 class RoomCreatedOut(BaseModel):

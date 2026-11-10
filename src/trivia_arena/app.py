@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from trivia_arena.api import health, rooms
 from trivia_arena.db import connect, init_db
@@ -16,6 +17,8 @@ from trivia_arena.domain.exceptions import (
     NotFoundError,
     ValidationDomainError,
 )
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 def create_app(*, db_path: Path | str = "data/trivia.db") -> FastAPI:
@@ -55,4 +58,10 @@ def create_app(*, db_path: Path | str = "data/trivia.db") -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(rooms.router)
+
+    @app.get("/")
+    def index() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
+
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
