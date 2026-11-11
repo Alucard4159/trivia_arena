@@ -151,6 +151,7 @@ def test_concurrent_score_awards_once(tmp_path: Path) -> None:
     q = repo.pick_question("engineering", [])
     assert q is not None
     rnd = repo.create_round(room.id, 1, q.id, "2099-01-01T00:00:00Z")
+    assert rnd is not None
     repo.set_current_round(room.id, 1)
     repo.set_status(room.id, "active")
     # Correct answer so a double-score would be visible.
@@ -201,6 +202,84 @@ def test_concurrent_score_awards_once(tmp_path: Path) -> None:
     assert score == 1
 
 
+def test_concurrent_start_claims_once(tmp_path: Path) -> None:
+    db_path = tmp_path / "start_race.db"
+    conn = connect(db_path)
+    init_db(conn)
+    repo = RoomRepository(conn)
+    room = repo.create_room("START1", "engineering")
+    host, _token = repo.add_player(room.id, "Host", is_host=True)
+    repo.set_host(room.id, host.id)
+    conn.commit()
+    conn.close()
+
+    barrier = threading.Barrier(2)
+    wins: list[bool] = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        c = connect(db_path)
+        r = RoomRepository(c)
+        barrier.wait()
+        won = r.claim_status(room.id, from_status="lobby", to_status="active")
+        if won:
+            q = r.pick_question("engineering", [])
+            assert q is not None
+            created = r.create_round(room.id, 1, q.id, "2099-01-01T00:00:00Z")
+            assert created is not None
+            r.set_current_round(room.id, 1)
+        c.commit()
+        with lock:
+            wins.append(won)
+        c.close()
+
+    t1 = threading.Thread(target=worker)
+    t2 = threading.Thread(target=worker)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert wins.count(True) == 1
+    assert wins.count(False) == 1
+    check = connect(db_path)
+    assert check.execute("SELECT status FROM rooms WHERE id = ?", (room.id,)).fetchone()[0] == (
+        "active"
+    )
+    assert (
+        check.execute(
+            "SELECT COUNT(*) FROM rounds WHERE room_id = ? AND round_number = 1",
+            (room.id,),
+        ).fetchone()[0]
+        == 1
+    )
+    check.close()
+
+
+def test_second_start_returns_conflict(client: TestClient) -> None:
+    created = client.post("/api/rooms", json={"display_name": "Host"}).json()
+    code = created["code"]
+    auth = {"Authorization": f"Bearer {created['token']}"}
+    assert client.post(f"/api/rooms/{code}/start", headers=auth).status_code == 200
+    again = client.post(f"/api/rooms/{code}/start", headers=auth)
+    assert again.status_code == 409
+
+
+def test_create_round_idempotent_on_duplicate(tmp_path: Path) -> None:
+    db_path = tmp_path / "round_dup.db"
+    conn = connect(db_path)
+    init_db(conn)
+    repo = RoomRepository(conn)
+    room = repo.create_room("ROUND1", "engineering")
+    q = repo.pick_question("engineering", [])
+    assert q is not None
+    first = repo.create_round(room.id, 1, q.id, "2099-01-01T00:00:00Z")
+    second = repo.create_round(room.id, 1, q.id, "2099-01-01T00:00:00Z")
+    assert first is not None
+    assert second is None
+    conn.close()
+
+
 def _with_csrf(client: TestClient) -> TestClient:
     csrf = client.get("/api/auth/csrf").json()["csrf_token"]
     client.headers["X-CSRF-Token"] = csrf
@@ -213,6 +292,7 @@ def test_create_rate_limit(tmp_path: Path) -> None:
         create_rate=(2, 60.0),
         join_rate=(10_000, 60.0),
         lookup_rate=(10_000, 60.0),
+        action_rate=(10_000, 60.0),
     )
     with TestClient(app) as raw:
         client = _with_csrf(raw)
@@ -228,6 +308,7 @@ def test_xff_ignored_unless_trust_proxy(tmp_path: Path) -> None:
         create_rate=(10_000, 60.0),
         join_rate=(1, 60.0),
         lookup_rate=(10_000, 60.0),
+        action_rate=(10_000, 60.0),
         trust_proxy=False,
     )
     with TestClient(app) as raw:
@@ -257,6 +338,7 @@ def test_join_rate_limit(tmp_path: Path) -> None:
         create_rate=(10_000, 60.0),
         join_rate=(2, 60.0),
         lookup_rate=(10_000, 60.0),
+        action_rate=(10_000, 60.0),
     )
     with TestClient(app) as raw:
         client = _with_csrf(raw)
@@ -289,6 +371,7 @@ def test_lookup_rate_limit(tmp_path: Path) -> None:
         create_rate=(10_000, 60.0),
         join_rate=(10_000, 60.0),
         lookup_rate=(3, 60.0),
+        action_rate=(10_000, 60.0),
     )
     with TestClient(app) as raw:
         client = _with_csrf(raw)
@@ -298,3 +381,61 @@ def test_lookup_rate_limit(tmp_path: Path) -> None:
         assert client.get(f"/api/rooms/{code}").status_code == 200
         assert client.get(f"/api/rooms/{code}").status_code == 200
         assert client.get(f"/api/rooms/{code}").status_code == 429
+
+
+def test_action_rate_limit(tmp_path: Path) -> None:
+    app = create_app(
+        db_path=tmp_path / "action.db",
+        create_rate=(10_000, 60.0),
+        join_rate=(10_000, 60.0),
+        lookup_rate=(10_000, 60.0),
+        action_rate=(1, 60.0),
+    )
+    with TestClient(app) as raw:
+        client = _with_csrf(raw)
+        created = client.post("/api/rooms", json={"display_name": "Host"}).json()
+        code = created["code"]
+        auth = {"Authorization": f"Bearer {created['token']}"}
+        assert client.post(f"/api/rooms/{code}/start", headers=auth).status_code == 200
+        limited = client.post(
+            f"/api/rooms/{code}/answer",
+            headers=auth,
+            json={"choice_index": 0},
+        )
+        assert limited.status_code == 429
+
+
+def test_samesite_none_requires_secure(tmp_path: Path) -> None:
+    try:
+        create_app(
+            db_path=tmp_path / "cookie.db",
+            cookie_samesite="none",
+            cookie_secure=False,
+        )
+    except ValueError as exc:
+        assert "Secure" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for SameSite=none without Secure")
+
+
+def test_non_member_state_hides_prompt_and_reveal(client: TestClient) -> None:
+    created = client.post("/api/rooms", json={"display_name": "Host"}).json()
+    code = created["code"]
+    auth = {"Authorization": f"Bearer {created['token']}"}
+    assert client.post(f"/api/rooms/{code}/start", headers=auth).status_code == 200
+
+    member = client.get(f"/api/rooms/{code}", headers=auth).json()
+    assert member["question"] is not None
+    assert len(member["players"]) >= 1
+
+    # Fresh client: no session/Bearer — live prompt + roster stripped after start.
+    stranger_app = client.app
+    with TestClient(stranger_app) as stranger:  # type: ignore[arg-type]
+        csrf = stranger.get("/api/auth/csrf").json()["csrf_token"]
+        stranger.headers["X-CSRF-Token"] = csrf
+        public = stranger.get(f"/api/rooms/{code}").json()
+        assert public["status"] == "active"
+        assert public["question"] is None
+        assert public["last_result"] is None
+        assert public["phase_ends_at"] is None
+        assert public["players"] == []

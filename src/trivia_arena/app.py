@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -28,6 +28,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_CREATE_RATE = (10, 60.0)  # 10 creates / minute / IP
 DEFAULT_JOIN_RATE = (20, 60.0)  # 20 joins / minute / IP
 DEFAULT_LOOKUP_RATE = (120, 60.0)  # 120 lookups / minute / IP
+DEFAULT_ACTION_RATE = (60, 60.0)  # 60 start/answer/next / minute / IP
 
 
 def _parse_cors_origins(value: str | None) -> list[str]:
@@ -46,6 +47,7 @@ def create_app(
     create_rate: tuple[int, float] = DEFAULT_CREATE_RATE,
     join_rate: tuple[int, float] = DEFAULT_JOIN_RATE,
     lookup_rate: tuple[int, float] = DEFAULT_LOOKUP_RATE,
+    action_rate: tuple[int, float] = DEFAULT_ACTION_RATE,
     cors_origins: Sequence[str] | None = None,
     cookie_secure: bool | None = None,
     cookie_samesite: str | None = None,
@@ -63,10 +65,15 @@ def create_app(
     samesite = (cookie_samesite or os.environ.get("TRIVIA_COOKIE_SAMESITE") or "lax").lower()
     if samesite not in {"lax", "strict", "none"}:
         samesite = "lax"
+    if samesite == "none" and not secure:
+        raise ValueError(
+            "cookie SameSite=none requires Secure "
+            "(set TRIVIA_COOKIE_SECURE=1 / cookie_secure=True)"
+        )
     proxy = trust_proxy if trust_proxy is not None else _env_flag("TRIVIA_TRUST_PROXY")
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         conn = connect(path)
         try:
             init_db(conn)
@@ -84,6 +91,10 @@ def create_app(
         app.state.lookup_limiter = RateLimiter(
             max_calls=lookup_rate[0],
             window_seconds=lookup_rate[1],
+        )
+        app.state.action_limiter = RateLimiter(
+            max_calls=action_rate[0],
+            window_seconds=action_rate[1],
         )
         app.state.cookie_secure = secure
         app.state.cookie_samesite = samesite

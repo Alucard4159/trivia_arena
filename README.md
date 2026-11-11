@@ -37,7 +37,7 @@ $env:TRIVIA_COOKIE_SAMESITE = "none"   # cross-site cookies
 uv run trivia-arena
 ```
 
-Same-origin (default) needs no CORS env vars. Create/join/lookup are rate-limited per peer IP.
+Same-origin (default) needs no CORS env vars. Create/join/lookup/actions are rate-limited per peer IP. `SameSite=none` requires `TRIVIA_COOKIE_SECURE=true` (enforced at startup).
 
 ## Question packs
 
@@ -60,7 +60,7 @@ API client:
 4. Players `POST /api/rooms/{code}/answer` `{ "choice_index": 0 }`
 5. Host `POST /api/rooms/{code}/next` (or wait for timers)
 
-`GET /api/rooms/{code}` returns lobby/active state (includes `pack_id`). Auth via Bearer **or** session cookie.
+`GET /api/rooms/{code}` returns lobby/meta publicly (roster only while lobby); live `question` / reveal / post-start roster require room membership. Logout burns the server-side token hash.
 
 ## Test
 

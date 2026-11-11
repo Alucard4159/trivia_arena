@@ -12,6 +12,7 @@ Turn-based multiplayer trivia API (FastAPI + SQLite) with a vanilla static UI, q
 
 - Phase: build / stabilization
 - Overall: green — core game loop, packs, security hardening, and tests are in place on GitHub `main`
+- Local (uncommitted on `main`): 2026-11-10 security review remediation (logout token burn, member-gated Q/reveal/roster, SameSite gate, OTDB txn/length caps, action limits, claim_status + idempotent create_round); 33 pytest green
 
 ## Active priorities
 
@@ -28,4 +29,4 @@ Turn-based multiplayer trivia API (FastAPI + SQLite) with a vanilla static UI, q
 ## Risks / blockers
 
 - Single-process SQLite + in-memory rate limits — fine for demos, not multi-worker prod
-- Cross-site Pages hosting needs CORS + `SameSite=None; Secure` carefully configured
+- Cross-site Pages hosting still needs CORS allowlist + Secure cookies; misconfig now fails at startup if `SameSite=none` without Secure

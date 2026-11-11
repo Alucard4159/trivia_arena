@@ -22,3 +22,4 @@
 - [x] Cookie/CSRF browser auth; Bearer for API
 - [x] Security hardening (score claim, token hash scrub, rate limits, trust-proxy)
 - [x] context-bootstrap (project `.context/` + workspace pointer)
+- [x] 2026-11-10 security review remediation (logout burn, member-gated state, SameSite gate, OTDB txn/length, action limits, claim start/round, post-start roster gate) — local uncommitted

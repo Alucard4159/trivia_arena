@@ -110,9 +110,11 @@ def get_room(
 )
 def start_room(
     code: str,
+    request: Request,
     game: Annotated[GameService, Depends(get_game_service)],
     actor: Annotated[PlayerRow, Depends(require_player)],
 ) -> RoomStateOut:
+    _enforce(request.app.state.action_limiter, _client_key(request), action="room action")
     return game.start(code, actor)
 
 
@@ -124,9 +126,11 @@ def start_room(
 def answer(
     code: str,
     body: AnswerIn,
+    request: Request,
     game: Annotated[GameService, Depends(get_game_service)],
     actor: Annotated[PlayerRow, Depends(require_player)],
 ) -> RoomStateOut:
+    _enforce(request.app.state.action_limiter, _client_key(request), action="room action")
     return game.answer(code, actor, body.choice_index)
 
 
@@ -137,7 +141,9 @@ def answer(
 )
 def next_round(
     code: str,
+    request: Request,
     game: Annotated[GameService, Depends(get_game_service)],
     actor: Annotated[PlayerRow, Depends(require_player)],
 ) -> RoomStateOut:
+    _enforce(request.app.state.action_limiter, _client_key(request), action="room action")
     return game.next_round(code, actor)

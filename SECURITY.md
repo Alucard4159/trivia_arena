@@ -67,6 +67,7 @@ Residual risk: SHA-256 without per-token salt is fine for high-entropy `token_ur
 - Create room: 10 / minute (default)
 - Join: 20 / minute (default)
 - Room lookup: 120 / minute (default; allows ~1 Hz UI polling with headroom)
+- Room actions (start/answer/next): 60 / minute (default)
 
 Return `429` + `Retry-After: 60`. Limits are configurable in `create_app(...)`.
 
@@ -83,13 +84,25 @@ Residual risk: limiter is per-process memory (not shared across workers).
 - Session secret in HttpOnly `ta_session` (not JS-readable).
 - CSRF double-submit: readable `ta_csrf` + required `X-CSRF-Token` on unsafe methods when not using Bearer.
 - UI keeps only `{code, is_host, player_id}` in `sessionStorage`.
-- `GET /api/auth/csrf`, `POST /api/auth/logout`.
+- `GET /api/auth/csrf`, `POST /api/auth/logout` (logout burns `token_hash` so prior Bearer secrets die with the cookies — SEC-026).
 
 ### 6. Split-origin hosting
 
 **Issue:** GitHub Pages + separate API needs credentialed CORS without reflecting arbitrary `Origin`.
 
-**Fix:** CORS middleware only when `TRIVIA_CORS_ORIGINS` / `create_app(cors_origins=…)` is set; credentials allowed; methods/headers allowlisted. Cross-site cookies need `TRIVIA_COOKIE_SAMESITE=none` + `TRIVIA_COOKIE_SECURE=true`.
+**Fix:** CORS middleware only when `TRIVIA_CORS_ORIGINS` / `create_app(cors_origins=…)` is set; credentials allowed; methods/headers allowlisted. Cross-site cookies need `TRIVIA_COOKIE_SAMESITE=none` + `TRIVIA_COOKIE_SECURE=true`. `create_app` **rejects** `SameSite=none` without `Secure`.
+
+### 7. Leaked room code → live cheat feed
+
+**Issue:** Unauthenticated `GET /api/rooms/{code}` returned open-round prompts and reveal `correct_index` / answers.
+
+**Fix:** Lobby/meta (code, status, pack) stays public for join UX + rate-limited probes. Player roster is public only while `lobby`; after start, roster/scores plus live `question` / `phase_ends_at` / `your_answered` / `last_result` are **room-member only**.
+
+### 8. OTDB fetch under an open DB transaction
+
+**Issue:** Pack ensure called Open Trivia DB while the request SQLite transaction was still open.
+
+**Fix:** `RoomRepository.commit()` before third-party HTTP, then insert. OTDB rows are HTML-unescaped, 4-choice filtered, and length-capped (`prompt` ≤ 500, choice ≤ 200) before persist.
 
 ## What we tested
 
@@ -102,6 +115,12 @@ Residual risk: limiter is per-process memory (not shared across workers).
 | `test_bearer_skips_csrf` | API Bearer path works without CSRF header |
 | `test_cookie_auth_requires_csrf` / `test_cookie_auth_with_csrf` | Cookie mutations gated by CSRF |
 | `test_cors_origins_configured` | Allowlisted origin only |
+| `test_logout_clears_session` | Cookie + prior Bearer dead after logout |
+| `test_samesite_none_requires_secure` | SameSite=none without Secure → ValueError |
+| `test_non_member_state_hides_prompt_and_reveal` | Anonymous GET strips live Q/reveal/roster |
+| `test_concurrent_start_claims_once` | lobby→active claim; one round 1 |
+| `test_create_round_idempotent_on_duplicate` | duplicate round_number → None, no 500 |
+| `test_action_rate_limit` | start/answer/next share action limiter |
 | Existing game-flow / packs / phase suites | Regressions |
 
 ## Explicit non-goals (still open)

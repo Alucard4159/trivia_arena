@@ -139,6 +139,8 @@ class GameService:
         if self._repo.count_questions(pack.id) >= MAX_ROUNDS:
             return
         fetch = self._otdb_fetch or (lambda: fetch_opentdb_questions(amount=OTDB_FETCH_AMOUNT))
+        # End any open DB transaction before third-party HTTP (PY-230).
+        self._repo.commit()
         try:
             fetched = fetch()
         except Exception as exc:
@@ -183,13 +185,12 @@ class GameService:
     def start(self, code: str, actor: PlayerRow) -> RoomStateOut:
         room = self._require_room(code)
         self._require_host(actor, room.id)
-        if room.status != "lobby":
-            raise ConflictError("room already started")
         if len(self._repo.list_players(room.id)) < 1:
             raise ConflictError("need at least one player")
-
+        # Claim lobby→active before opening round 1 so concurrent starts cannot 500.
+        if not self._repo.claim_status(room.id, from_status="lobby", to_status="active"):
+            raise ConflictError("room already started")
         self._open_next_round(room.id, next_number=1)
-        self._repo.set_status(room.id, "active")
         room = self._require_room(code)
         return self._build_state(room, actor)
 
@@ -233,10 +234,11 @@ class GameService:
         if rnd.status == "open":
             self._score_round(rnd.id, reveal_seconds=0)
             rnd = self._repo.get_round_by_id(rnd.id)
-            assert rnd is not None
+            if rnd is None:
+                raise ConflictError("round disappeared during score")
 
         if room.current_round >= MAX_ROUNDS:
-            self._repo.set_status(room.id, "finished")
+            self._repo.claim_status(room.id, from_status="active", to_status="finished")
             room = self._require_room(code)
             return self._build_state(room, actor)
 
@@ -275,7 +277,9 @@ class GameService:
                 if not reveal_done:
                     return room
                 if room.current_round >= MAX_ROUNDS:
-                    self._repo.set_status(room.id, "finished")
+                    self._repo.claim_status(
+                        room.id, from_status="active", to_status="finished"
+                    )
                     return self._require_room_by_id(room.id)
                 self._open_next_round(room.id, next_number=room.current_round + 1)
                 continue
@@ -308,29 +312,39 @@ class GameService:
         used = self._repo.used_question_ids(room_id)
         question = self._repo.pick_question(room.pack_id, used)
         if question is None:
-            self._repo.set_status(room_id, "finished")
+            self._repo.claim_status(room_id, from_status="active", to_status="finished")
             return
         ends = _deadline(self._round_seconds, now=self._now())
-        self._repo.create_round(room_id, next_number, question.id, ends)
+        created = self._repo.create_round(room_id, next_number, question.id, ends)
+        if created is None:
+            # Lost race with another tick/next — winner already owns this round_number.
+            return
         self._repo.set_current_round(room_id, next_number)
 
     def _build_state(self, room: RoomRow, viewer: PlayerRow | None) -> RoomStateOut:
-        players = [
-            PlayerPublic(
-                id=p.id,
-                display_name=p.display_name,
-                is_host=p.is_host,
-                score=p.score,
-            )
-            for p in self._repo.list_players(room.id)
-        ]
+        member = viewer is not None and viewer.room_id == room.id
+        # Lobby player list stays public for join UX. After start, roster/scores are
+        # members-only (closes scoreboard peek via leaked code).
+        if member or room.status == "lobby":
+            players = [
+                PlayerPublic(
+                    id=p.id,
+                    display_name=p.display_name,
+                    is_host=p.is_host,
+                    score=p.score,
+                )
+                for p in self._repo.list_players(room.id)
+            ]
+        else:
+            players = []
 
         question: QuestionPublic | None = None
         your_answered: bool | None = None
         phase_ends_at: str | None = None
         last_result: RoundResult | None = None
 
-        if room.current_round > 0:
+        # Live prompts and reveal payloads are members-only.
+        if viewer is not None and viewer.room_id == room.id and room.current_round > 0:
             rnd = self._repo.get_round(room.id, room.current_round)
             if rnd is not None:
                 phase_ends_at = rnd.phase_ends_at
@@ -341,8 +355,7 @@ class GameService:
                         choices=q.choices,
                         round_number=rnd.round_number,
                     )
-                    if viewer is not None and viewer.room_id == room.id:
-                        your_answered = self._repo.has_answer(rnd.id, viewer.id)
+                    your_answered = self._repo.has_answer(rnd.id, viewer.id)
                 elif rnd.status == "scored":
                     last_result = self._build_result(room.id, rnd)
 

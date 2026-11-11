@@ -9,6 +9,8 @@ import httpx
 from trivia_arena.packs_catalog import PackQuestion
 
 OTDB_URL = "https://opentdb.com/api.php"
+MAX_PROMPT_LEN = 500
+MAX_CHOICE_LEN = 200
 
 
 def fetch_opentdb_questions(
@@ -42,6 +44,8 @@ def fetch_opentdb_questions(
         random.shuffle(choices)
         # OTDB multiple always has 4 answers (1 correct + 3 incorrect).
         if len(choices) != 4:
+            continue
+        if len(prompt) > MAX_PROMPT_LEN or any(len(c) > MAX_CHOICE_LEN for c in choices):
             continue
         out.append(
             PackQuestion(

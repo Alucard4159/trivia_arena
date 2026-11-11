@@ -46,14 +46,27 @@ def test_cookie_auth_with_csrf(client: TestClient) -> None:
 
 
 def test_logout_clears_session(client: TestClient) -> None:
-    client.post("/api/rooms", json={"display_name": "Host"})
+    created = client.post("/api/rooms", json={"display_name": "Host"}).json()
+    code = created["code"]
+    raw = created["token"]
     assert SESSION_COOKIE in client.cookies
+
     gone = client.post("/api/auth/logout")
     assert gone.status_code == 204
-    # Starlette TestClient may keep jar entries as empty; server delete is enough.
-    # Re-issue CSRF for next call.
+
     csrf = client.get("/api/auth/csrf").json()["csrf_token"]
     client.headers["X-CSRF-Token"] = csrf
+
+    # Cookie session must not authorize mutations after logout.
+    blocked_cookie = client.post(f"/api/rooms/{code}/start")
+    assert blocked_cookie.status_code == 403
+
+    # Prior Bearer token is burned server-side (SEC-026).
+    blocked_bearer = client.post(
+        f"/api/rooms/{code}/start",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert blocked_bearer.status_code == 403
 
 
 def test_cors_origins_configured(tmp_path: Path) -> None:
@@ -62,6 +75,7 @@ def test_cors_origins_configured(tmp_path: Path) -> None:
         create_rate=(10_000, 60.0),
         join_rate=(10_000, 60.0),
         lookup_rate=(10_000, 60.0),
+        action_rate=(10_000, 60.0),
         cors_origins=["https://alucard4159.github.io"],
     )
     with TestClient(app) as client:

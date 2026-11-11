@@ -4,7 +4,13 @@ import json
 import sqlite3
 from dataclasses import dataclass
 
+from trivia_arena.domain.exceptions import NotFoundError
 from trivia_arena.security import hash_token, new_token
+
+_ROOM_COLS = "id, code, status, host_player_id, current_round, pack_id"
+_PLAYER_COLS = "id, room_id, display_name, is_host, score"
+_QUESTION_COLS = "id, pack_id, category, prompt, choices_json, correct_index"
+_ROUND_COLS = "id, room_id, round_number, question_id, status, phase_ends_at"
 
 
 @dataclass(frozen=True)
@@ -93,27 +99,31 @@ class RoomRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
+    def commit(self) -> None:
+        """End the open transaction (e.g. before third-party HTTP)."""
+        self._conn.commit()
+
     def create_room(self, code: str, pack_id: str) -> RoomRow:
         cur = self._conn.execute(
             "INSERT INTO rooms (code, status, pack_id) VALUES (?, 'lobby', ?)",
             (code, pack_id),
         )
         row = self._conn.execute(
-            "SELECT * FROM rooms WHERE id = ?",
+            f"SELECT {_ROOM_COLS} FROM rooms WHERE id = ?",
             (cur.lastrowid,),
         ).fetchone()
         return _room(row)
 
     def get_by_code(self, code: str) -> RoomRow | None:
         row = self._conn.execute(
-            "SELECT * FROM rooms WHERE code = ?",
+            f"SELECT {_ROOM_COLS} FROM rooms WHERE code = ?",
             (code.upper(),),
         ).fetchone()
         return _room(row) if row else None
 
     def get_by_id(self, room_id: int) -> RoomRow | None:
         row = self._conn.execute(
-            "SELECT * FROM rooms WHERE id = ?",
+            f"SELECT {_ROOM_COLS} FROM rooms WHERE id = ?",
             (room_id,),
         ).fetchone()
         return _room(row) if row else None
@@ -129,6 +139,14 @@ class RoomRepository:
             "UPDATE rooms SET status = ? WHERE id = ?",
             (status, room_id),
         )
+
+    def claim_status(self, room_id: int, *, from_status: str, to_status: str) -> bool:
+        """Conditional status transition. True only for the winning claim (ARCH-039)."""
+        cur = self._conn.execute(
+            "UPDATE rooms SET status = ? WHERE id = ? AND status = ?",
+            (to_status, room_id, from_status),
+        )
+        return cur.rowcount == 1
 
     def set_current_round(self, room_id: int, round_number: int) -> None:
         self._conn.execute(
@@ -154,28 +172,36 @@ class RoomRepository:
             (room_id, display_name, token_hash, 1 if is_host else 0),
         )
         row = self._conn.execute(
-            "SELECT * FROM players WHERE id = ?",
+            f"SELECT {_PLAYER_COLS} FROM players WHERE id = ?",
             (cur.lastrowid,),
         ).fetchone()
         return _player(row), raw_token
 
+    def invalidate_player_token(self, player_id: int) -> None:
+        """Burn the stored hash so prior Bearer/cookie secrets stop matching."""
+        burned = hash_token(new_token())
+        self._conn.execute(
+            "UPDATE players SET token_hash = ? WHERE id = ?",
+            (burned, player_id),
+        )
+
     def list_players(self, room_id: int) -> list[PlayerRow]:
         rows = self._conn.execute(
-            "SELECT * FROM players WHERE room_id = ? ORDER BY id",
+            f"SELECT {_PLAYER_COLS} FROM players WHERE room_id = ? ORDER BY id",
             (room_id,),
         ).fetchall()
         return [_player(r) for r in rows]
 
     def get_player_by_token(self, raw_token: str) -> PlayerRow | None:
         row = self._conn.execute(
-            "SELECT * FROM players WHERE token_hash = ?",
+            f"SELECT {_PLAYER_COLS} FROM players WHERE token_hash = ?",
             (hash_token(raw_token),),
         ).fetchone()
         return _player(row) if row else None
 
     def get_player(self, player_id: int) -> PlayerRow | None:
         row = self._conn.execute(
-            "SELECT * FROM players WHERE id = ?",
+            f"SELECT {_PLAYER_COLS} FROM players WHERE id = ?",
             (player_id,),
         ).fetchone()
         return _player(row) if row else None
@@ -185,7 +211,7 @@ class RoomRepository:
             placeholders = ",".join("?" for _ in exclude_ids)
             row = self._conn.execute(
                 f"""
-                SELECT * FROM questions
+                SELECT {_QUESTION_COLS} FROM questions
                 WHERE pack_id = ? AND id NOT IN ({placeholders})
                 ORDER BY RANDOM()
                 LIMIT 1
@@ -194,8 +220,8 @@ class RoomRepository:
             ).fetchone()
         else:
             row = self._conn.execute(
-                """
-                SELECT * FROM questions
+                f"""
+                SELECT {_QUESTION_COLS} FROM questions
                 WHERE pack_id = ?
                 ORDER BY RANDOM()
                 LIMIT 1
@@ -245,24 +271,28 @@ class RoomRepository:
         round_number: int,
         question_id: int,
         phase_ends_at: str,
-    ) -> RoundRow:
+    ) -> RoundRow | None:
+        """Insert open round. None if (room_id, round_number) already exists (race loser)."""
         cur = self._conn.execute(
             """
-            INSERT INTO rounds (room_id, round_number, question_id, status, phase_ends_at)
+            INSERT OR IGNORE INTO rounds
+                (room_id, round_number, question_id, status, phase_ends_at)
             VALUES (?, ?, ?, 'open', ?)
             """,
             (room_id, round_number, question_id, phase_ends_at),
         )
+        if cur.rowcount != 1:
+            return None
         row = self._conn.execute(
-            "SELECT * FROM rounds WHERE id = ?",
+            f"SELECT {_ROUND_COLS} FROM rounds WHERE id = ?",
             (cur.lastrowid,),
         ).fetchone()
         return _round(row)
 
     def get_round(self, room_id: int, round_number: int) -> RoundRow | None:
         row = self._conn.execute(
-            """
-            SELECT * FROM rounds
+            f"""
+            SELECT {_ROUND_COLS} FROM rounds
             WHERE room_id = ? AND round_number = ?
             """,
             (room_id, round_number),
@@ -271,18 +301,18 @@ class RoomRepository:
 
     def get_round_by_id(self, round_id: int) -> RoundRow | None:
         row = self._conn.execute(
-            "SELECT * FROM rounds WHERE id = ?",
+            f"SELECT {_ROUND_COLS} FROM rounds WHERE id = ?",
             (round_id,),
         ).fetchone()
         return _round(row) if row else None
 
     def get_question(self, question_id: int) -> QuestionRow:
         row = self._conn.execute(
-            "SELECT * FROM questions WHERE id = ?",
+            f"SELECT {_QUESTION_COLS} FROM questions WHERE id = ?",
             (question_id,),
         ).fetchone()
         if row is None:
-            raise RuntimeError(f"missing question id={question_id}")
+            raise NotFoundError(f"missing question id={question_id}")
         return _question(row)
 
     def upsert_answer(self, round_id: int, player_id: int, choice_index: int) -> bool:

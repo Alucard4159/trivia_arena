@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi.testclient import TestClient
 
 import trivia_arena.services.game_service as game_service
+from trivia_arena.opentdb import MAX_PROMPT_LEN, fetch_opentdb_questions
 from trivia_arena.packs_catalog import PackQuestion
 
 SCIENCE_PROMPTS = {
@@ -98,3 +101,37 @@ def test_open_trivia_fetches_and_caches(client: TestClient, monkeypatch) -> None
     )
     assert again.status_code == 201
     assert calls["n"] == 1
+
+
+def test_opentdb_skips_oversize_prompts() -> None:
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "response_code": 0,
+                "results": [
+                    {
+                        "question": "x" * (MAX_PROMPT_LEN + 1),
+                        "correct_answer": "A",
+                        "incorrect_answers": ["B", "C", "D"],
+                    },
+                    {
+                        "question": "Short?",
+                        "correct_answer": "A",
+                        "incorrect_answers": ["B", "C", "D"],
+                    },
+                ],
+            }
+
+    class _Client:
+        def get(self, *_a: object, **_k: object) -> _Resp:
+            return _Resp()
+
+        def close(self) -> None:
+            return None
+
+    out = fetch_opentdb_questions(amount=2, client=_Client())  # type: ignore[arg-type]
+    assert len(out) == 1
+    assert out[0].prompt == "Short?"

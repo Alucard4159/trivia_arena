@@ -2,6 +2,29 @@
 
 Durable failure-pattern memory for improving agents over time.
 
+## [TA-002] Commit before third-party HTTP under request-scoped SQLite
+- Date: 2026-11-10
+- Confidence: high
+- Scope: trivia_arena / FastAPI+sqlite3 Depends
+
+### Symptom
+OTDB fetch ran while the request `Depends(get_connection)` transaction was still open.
+
+### Root Cause Class
+Single request-scoped connection wrapping service work that includes network I/O.
+
+### Detection
+- Any service path that calls httpx/external I/O after repo reads and before later writes.
+
+### Fix Pattern
+`repo.commit()` (or equivalent) immediately before the HTTP call; then resume writes.
+
+### Prevention Rule
+- When adding remote fetches inside GameService, end the open SQLite transaction first.
+
+### Applies to
+- Pack ensure, any future webhook/remote hydrate on the request path
+
 ## [TA-001] Workspace-root Cursor rules vs nested project
 - Date: 2026-11-10
 - Confidence: high

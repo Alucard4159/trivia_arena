@@ -16,6 +16,7 @@ def client(tmp_path: Path) -> TestClient:
         create_rate=(10_000, 60.0),
         join_rate=(10_000, 60.0),
         lookup_rate=(10_000, 60.0),
+        action_rate=(10_000, 60.0),
     )
     with TestClient(app) as test_client:
         csrf = test_client.get("/api/auth/csrf").json()["csrf_token"]

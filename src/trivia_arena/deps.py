@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 from typing import Annotated
 
@@ -19,7 +19,9 @@ def get_db_path(request: Request) -> Path:
     return Path(request.app.state.db_path)
 
 
-def get_connection(db_path: Annotated[Path, Depends(get_db_path)]) -> Iterator[sqlite3.Connection]:
+def get_connection(
+    db_path: Annotated[Path, Depends(get_db_path)],
+) -> Generator[sqlite3.Connection, None, None]:
     conn = sqlite3.connect(db_path, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

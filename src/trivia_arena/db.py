@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -173,7 +173,7 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 @contextmanager
-def db_session(db_path: Path | str) -> Iterator[sqlite3.Connection]:
+def db_session(db_path: Path | str) -> Generator[sqlite3.Connection, None, None]:
     conn = connect(db_path)
     try:
         yield conn
